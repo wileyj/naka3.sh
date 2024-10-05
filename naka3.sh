@@ -196,10 +196,12 @@ function run_signer() {
    local pid
 
    set -e
-   BLOCKSTACK_DEBUG=1 STACKS_LOG_DEBUG=1 RUST_BACKTRACE=full stacks-signer check-config -c "$signer_conf" >/dev/null 2>&1 || exit_error "Invalid signer config"
+   # BLOCKSTACK_DEBUG=1 STACKS_LOG_DEBUG=1 RUST_BACKTRACE=full stacks-signer check-config -c "$signer_conf" >/dev/null 2>&1 || exit_error "Invalid signer config"
+   RUST_BACKTRACE=full stacks-signer check-config -c "$signer_conf" >/dev/null 2>&1 || exit_error "Invalid signer config"
    set +e
 
-   BLOCKSTACK_DEBUG=1 STACKS_LOG_DEBUG=1 RUST_BACKTRACE=full stacks-signer run -c "$signer_conf" > "$logfile" 2>&1 &
+   # BLOCKSTACK_DEBUG=1 STACKS_LOG_DEBUG=1 RUST_BACKTRACE=full stacks-signer run -c "$signer_conf" > "$logfile" 2>&1 &
+   RUST_BACKTRACE=full stacks-signer run -c "$signer_conf" > "$logfile" 2>&1 &
    pid="$!"
    
    echo "$pid" > "$pidfile"
@@ -217,7 +219,8 @@ function run_node() {
    local pidfile="$3"
    local pid
 
-   BLOCKSTACK_DEBUG=1 STACKS_LOG_DEBUG=1 RUST_BACKTRACE=full stacks-node start --config "$node_conf" > "$logfile" 2>&1 &
+   # BLOCKSTACK_DEBUG=1 STACKS_LOG_DEBUG=1 RUST_BACKTRACE=full stacks-node start --config "$node_conf" > "$logfile" 2>&1 &
+   RUST_BACKTRACE=full stacks-node start --config "$node_conf" > "$logfile" 2>&1 &
    pid="$!"
    
    echo "$pid" > "$pidfile"
@@ -680,6 +683,7 @@ function make_stacking_tx() {
    local max_amount="$4"
    local nonce="$5"
    local auth_id="$6"
+   local stacking_function="$7"
    local signer_config_path
    local pox_address
    local signer_json
@@ -690,6 +694,7 @@ function make_stacking_tx() {
    local address_version
    local hash_bytes
    local start_burn_block=$((reward_cycle * 20 + 1))
+   local cycles
 
    signer_config_path="$(get_signer_config_path "$conf_file" "$signer_id")"
    signer_privkey="$(get_signer_private_key "$conf_file" "$signer_id")"
@@ -702,14 +707,27 @@ function make_stacking_tx() {
    fi
    hash_bytes="$(echo "$address_parts" | cut -d ' ' -f 2)"
 
+   case "$stacking_function" in
+      "stack-stx") cycles=2 ;;
+      *) cycles=1 ;;
+   esac
+   debug "Generating stacking signature for extend with the following parameters:"
+   debug "  Stacking Function: $stacking_function"
+   debug "  POX Address: $pox_address"
+   debug "  Reward Cycle: $reward_cycle"
+   debug "  Config: $signer_config_path"
+   debug "  Method: $stacking_function"
+   debug "  Max Amount: $max_amount"
+   debug "  Auth ID: $auth_id"
+   debug "  Period: $cycles"
    signer_json="$(stacks-signer generate-stacking-signature \
-        --pox-address "$pox_address" \
-        --reward-cycle "$reward_cycle" \
-        --config "$signer_config_path" \
-        --method "stack-stx" \
-        --period 12 \
-        --max-amount "$max_amount" \
-        --auth-id "$auth_id" \
+      --pox-address "$pox_address" \
+      --reward-cycle "$reward_cycle" \
+      --config "$signer_config_path" \
+      --method "$stacking_function" \
+      --period $cycles \
+      --max-amount "$max_amount" \
+      --auth-id "$auth_id" \
       | (
          local line
          local pubkey
@@ -728,21 +746,40 @@ function make_stacking_tx() {
    signer_pubkey="$(echo "$signer_json" | jq -r '.pubkey')"
    signer_signature="$(echo "$signer_json" | jq -r '.sig')"
 
-   run_blockstack_cli contract-call \
+   if [ "$stacking_function" == "stack-stx" ];then
+      debug "  Sending $stacking_function tx"
+      run_blockstack_cli contract-call \
+         "$signer_privkey" \
+         1000 \
+         "$nonce" \
+         "ST000000000000000000002AMW42H" \
+         "pox-4" \
+         "$stacking_function" \
+         -e "u${max_amount}" \
+         -e "{ version: 0x00, hashbytes: 0x${hash_bytes} }" \
+         -e "u${start_burn_block}" \
+         -e "u${cycles}" \
+         -e "(some ${signer_signature})" \
+         -e "${signer_pubkey}" \
+         -e "u${max_amount}" \
+         -e "u${auth_id}"
+   fi
+   if [ "$stacking_function" == "stack-extend" ];then
+      debug "  Sending $stacking_function tx"
+      run_blockstack_cli contract-call \
       "$signer_privkey" \
       1000 \
       "$nonce" \
       "ST000000000000000000002AMW42H" \
       "pox-4" \
-      "stack-stx" \
-      -e "u${max_amount}" \
+      "$stacking_function" \
+      -e "u${cycles}" \
       -e "{ version: 0x00, hashbytes: 0x${hash_bytes} }" \
-      -e "u${start_burn_block}" \
-      -e "u12" \
       -e "(some ${signer_signature})" \
       -e "${signer_pubkey}" \
       -e "u${max_amount}" \
       -e "u${auth_id}"
+   fi
 }
 
 # Get an account's nonce
@@ -775,7 +812,7 @@ function send_tx() {
    content_length="${#tx}"
    content_length=$((content_length / 2))
 
-   echo -n "$tx" | xxd -r -p | \
+   echo -e "$tx" | xxd -r -p | \
       curl -sL -X POST -H "content-type: application/octet-stream" -H "content-length: $content_length" --data-binary @- "http://${stacks_host}:${stacks_port}/v2/transactions"
 }
 
@@ -850,7 +887,7 @@ function begin_stx_transfers() {
 
       set -e
       response="$(send_tx "$tx" "$stacks_host" "$stacks_port")"
-
+      echo "response: $response"
       if [ -z "$(echo "$response" | jq -r '.error' 2>/dev/null)" ]; then
          nonce=$((nonce + 1))
       fi
@@ -945,6 +982,10 @@ function main() {
                set -ue
 
                run_bitcoin_cli "$CONFIG" generatetoaddress "$num_blocks" "$addr"
+               ;;
+
+            getblockcount)
+               run_bitcoin_cli "$CONFIG" getblockcount
                ;;
 
             peer)
@@ -1055,8 +1096,27 @@ function main() {
 
                set -ue
 
-               make_stacking_tx "$CONFIG" "$signer_id" "$reward_cycle" "$max_amount" "$nonce" "$auth_id"
+               make_stacking_tx "$CONFIG" "$signer_id" "$reward_cycle" "$max_amount" "$nonce" "$auth_id" "stack-stx"
                ;;
+
+            stack-extend)
+               set +ue
+               local reward_cycle="$4"
+               debug "Reward cycle is '$reward_cycle'"
+
+               local max_amount="$5"
+               debug "Max amount is '$max_amount'"
+
+               local nonce="$6"
+               debug "Nonce is $nonce"
+
+               local auth_id="$7"
+               debug "Auth ID is $auth_id"
+
+               debug "**************** Calling stack-extend ****************"
+               make_stacking_tx "$CONFIG" "$signer_id" "$reward_cycle" "$max_amount" "$nonce" "$auth_id" "stack-extend"
+               ;;
+
             *)
                usage "signer"
                ;;
