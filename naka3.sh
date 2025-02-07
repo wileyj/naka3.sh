@@ -887,7 +887,6 @@ function begin_stx_transfers() {
 
       set -e
       response="$(send_tx "$tx" "$stacks_host" "$stacks_port")"
-      echo "response: $response"
       if [ -z "$(echo "$response" | jq -r '.error' 2>/dev/null)" ]; then
          nonce=$((nonce + 1))
       fi
