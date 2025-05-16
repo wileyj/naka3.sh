@@ -2,14 +2,15 @@
 
 set -uoe pipefail
 
-DEBUG=1
+DEBUG=0
 CONFIG="./config.sh"
 PROGNAME="$0"
 TEMPLATES="$(dirname "$PROGNAME")/conf.in"
 
 function debug() {
    if [ "$DEBUG" -ne 0 ]; then
-      echo "DEBG [$(date +%s.%N)] $1" >/dev/stderr
+      echo  "DEBG $1\n" >/dev/stderr
+      # echo -n "DEBG [$(date +%s.%N)] $1" >/dev/stderr
    fi
 }
 
@@ -33,6 +34,14 @@ function get_bitcoind_logfile_path() {
    source "$conf_path"
    echo "$(conf_get_bitcoind_data_dir)/bitcoin.log"
 }
+
+# # Get the path to the bitcoin chainstate dir
+# # $1: config file
+# function get_bitcoin_data_dir() {
+#    local conf_path="$1"
+#    source "$conf_path"
+#    echo "$(conf_get_bitcoind_data_dir)"
+# }
 
 # Get the path to the signer PID file
 # $1: config file
@@ -149,6 +158,65 @@ function get_node_event_observer_template_path() {
    echo "$TEMPLATES/stacks-node-event-observer.toml.in"
 }
 
+# Get the path to the bitcoin config template
+function get_bitcoin_template_path() {
+   echo "$TEMPLATES/bitcoin.conf.in"
+}
+
+# Get the path to the bitcoin config file
+# $1: config file
+function get_bitcoin_config_path() {
+   local conf_path="$1"
+   source "$conf_path"
+   echo "$(conf_get_bitcoind_data_dir)/bitcoin.conf"
+}
+
+# Make a bitcoin config file
+# Call this _before_ generating node and signer config files
+# $1: config file
+# $2: template file
+# prints the path
+function make_bitcoin_config() {
+   local conf_path="$1"
+   local template_path="$2"
+
+   local port
+   local rpcport
+   local rpcuser
+   local rpcpass
+   local bitcoin_conf_path
+   local datadir
+
+   if ! [ -f "$template_path" ]; then
+      exit_error "No such file or directory: $template_path"
+   fi
+   
+   datadir="$(conf_get_bitcoind_data_dir "$conf_path")"
+   # datadir="$(get_bitcoin_data_dir "$conf_path")"
+   bitcoin_conf_path="$(get_bitcoin_config_path "$conf_path")"
+   
+   source "$conf_path"
+   
+   # NOTE: these functions are loaded from conf_path
+   port="$(conf_get_bitcoind_p2p_port)"
+   rpcport="$(conf_get_bitcoind_rpc_port)"
+   rpcuser="$(conf_get_bitcoind_rpc_user)"
+   rpcpass="$(conf_get_bitcoind_rpc_pass)"
+
+   echo "bitcoin_conf_path: $bitcoin_conf_path"
+   echo "datadir: $bitcoin_conf_path"
+
+   sed -r \
+      -e "s!@@BITCOIN_RPC_PORT@@!$rpcport!g" \
+      -e "s!@@BITCOIN_P2P_PORT@@!$port!g" \
+      -e "s!@@BITCOIN_RPC_USER@@!$rpcuser!g" \
+      -e "s!@@BITCOIN_RPC_PASS@@!$rpcpass!g" \
+      -e "s!@@BITCOIN_DATA_DIR@@!$datadir!g" \
+      "$template_path" > "$bitcoin_conf_path"
+
+   echo "$bitcoin_conf_path"
+   return 0
+}
 
 # Run bitcoind
 # $1: p2p port
@@ -157,32 +225,49 @@ function get_node_event_observer_template_path() {
 # $4: logfile
 # $5: pidfile
 function run_bitcoind() {
-   local port="$1"
-   local rpcport="$2"
-   local datadir="$3"
-   local logfile="$4"
-   local pidfile="$5"
+   # "$config_path" "$logfile" "$pid_path"
+   local config=$1
+   local logfile=$2
+   local pidfile=$3
+   # local port="$1"
+   # local rpcport="$2"
+   # local datadir="$3"
+   # local logfile="$4"
+   # local pidfile="$5"
    local pid
 
    bitcoind \
-      --regtest \
-      --nodebug \
-      --nodebuglogfile \
-      --rest \
-      --txindex=1 \
-      --server=1 \
-      --listenonion=0 \
-      --rpcbind=0.0.0.0 \
-      --port="$port" \
-      --rpcport="$rpcport" \
-      --datadir="$datadir" \
-      --rpcuser="naka3" \
-      --rpcpassword="naka3" > "$logfile" 2>&1 &
+      -daemon \
+      -conf="$config" \
+      -pid="$pidfile" \
+      > "$logfile" 2>&1 &
+   # bitcoind \
+   #    --regtest \
+   #    --nodebug \
+   #    --nodebuglogfile \
+   #    --rest \
+   #    --txindex=1 \
+   #    --server=1 \
+   #    --listenonion=0 \
+   #    --rpcbind=0.0.0.0 \
+   #    --port="$port" \
+   #    --rpcport="$rpcport" \
+   #    --datadir="$datadir" \
+   #    --rpcuser="naka3" \
+   #    --fallbackfee=0.00001 \
+   #    --rpcpassword="naka3" > "$logfile" 2>&1 &
 
-   pid="$!"
-   echo "$pid" > "$pidfile"
+   # pid="$!"
+   # echo "$pid" > "$pidfile"
 
-   debug "Bitcoind started: pid $pid"
+   while true; do
+      if [ -f "$pidfile" ]; then
+         break
+      fi
+      sleep 1
+   done
+   debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Bitcoind started: pid $(cat $pidfile)"
+   # debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Bitcoind started: pid $pid"
 }
 
 # Run a signer
@@ -204,7 +289,7 @@ function run_signer() {
    
    echo "$pid" > "$pidfile"
 
-   debug "Signer started: PID $pid"
+   debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Signer started: PID $pid"
 }
 
 # Run a node
@@ -222,7 +307,7 @@ function run_node() {
    
    echo "$pid" > "$pidfile"
 
-   debug "Node started: PID $pid"
+   debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Node started: PID $pid"
 }
 
 # Start bitcoind
@@ -241,28 +326,30 @@ function start_bitcoind() {
    source "$conf_path"
    pid_path="$(get_bitcoind_pid_path "$conf_path")"
    logfile="$(get_bitcoind_logfile_path "$conf_path")"
-
-   # NOTE: these functions are loaded from conf_path
-   port="$(conf_get_bitcoind_p2p_port)"
-   rpcport="$(conf_get_bitcoind_rpc_port)"
+   config_path="$(get_bitcoin_config_path "$conf_path")"
+  
+   # # NOTE: these functions are loaded from conf_path
    datadir="$(conf_get_bitcoind_data_dir)"
+   rpcport="$(conf_get_bitcoind_rpc_port)"
+   rpcuser="$(conf_get_bitcoind_rpc_user)"
+   rpcpass="$(conf_get_bitcoind_rpc_pass)"
 
    if [ -f "$pid_path" ]; then
       echo "(already running $(cat "$pid_path"))"
       return 0
    fi
    
-   if [ -d "$datadir" ] && [[ "$resume" != "true" ]]; then
-      rm -rf "$datadir"
-      mkdir -p "$datadir"
+   if [ -d "$datadir/regtest" ] && [[ "$resume" != "true" ]]; then
+      rm -rf "$datadir/regtest"
+      mkdir -p "$datadir/regtest"
    fi
 
-   run_bitcoind "$port" "$rpcport" "$datadir" "$logfile" "$pid_path"
+   run_bitcoind "$config_path" "$logfile" "$pid_path"
 
    # wait for it to start up
    while true; do
       set +e
-      bitcoin-cli -rpcconnect="127.0.0.1:$rpcport" -rpcuser="naka3" -rpcpassword="naka3" ping 2>/dev/null
+      bitcoin-cli -rpcconnect="127.0.0.1:$rpcport" -rpcuser="$rpcuser" -rpcpassword="$rpcpass" ping 2>/dev/null
       rc=$?
       set -e
 
@@ -272,7 +359,12 @@ function start_bitcoind() {
       
       sleep 1
    done
-
+   # while true; do
+   #    if [ -f "$pid_path" ]; then
+   #       break
+   #    fi
+   #    sleep 1
+   # done
    echo "PID $(cat "$pid_path")"
    return 0
 }
@@ -446,7 +538,7 @@ function make_node_config() {
 
          signers="$remaining_signers"
 
-         debug "Add signer '$cur_signer', remaining is '$signers'"
+         debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Add signer '$cur_signer', remaining is '$signers'"
 
          signer_conf="$signer_datadir/signer-${cur_signer}.toml"
          # extract the endpoint
@@ -470,6 +562,7 @@ function make_node_config() {
    echo "$node_conf_path"
    return 0
 }
+
 
 # Set a fault injection in the existing node config.
 # $1: config file path
@@ -721,15 +814,15 @@ function make_stacking_tx() {
       "stack-stx") cycles=2 ;;
       *) cycles=1 ;;
    esac
-   debug "Generating stacking signature for extend with the following parameters:"
-   debug "  Stacking Function: $stacking_function"
-   debug "  POX Address: $pox_address"
-   debug "  Reward Cycle: $reward_cycle"
-   debug "  Config: $signer_config_path"
-   debug "  Method: $stacking_function"
-   debug "  Max Amount: $max_amount"
-   debug "  Auth ID: $auth_id"
-   debug "  Period: $cycles"
+   debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Generating stacking signature for extend with the following parameters:"
+   debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} -   Stacking Function: $stacking_function"
+   debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} -   POX Address: $pox_address"
+   debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} -   Reward Cycle: $reward_cycle"
+   debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} -   Config: $signer_config_path"
+   debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} -   Method: $stacking_function"
+   debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} -   Max Amount: $max_amount"
+   debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} -   Auth ID: $auth_id"
+   debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} -   Period: $cycles"
    signer_json="$(stacks-signer generate-stacking-signature \
         --pox-address "$pox_address" \
         --reward-cycle "$reward_cycle" \
@@ -757,7 +850,7 @@ function make_stacking_tx() {
    signer_signature="$(echo "$signer_json" | jq -r '.sig')"
 
    if [ "$stacking_function" == "stack-stx" ];then
-      debug "  Sending $stacking_function tx"
+      debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} -   Sending $stacking_function tx"
       run_blockstack_cli contract-call \
          "$signer_privkey" \
          1000 \
@@ -775,7 +868,7 @@ function make_stacking_tx() {
          -e "u${auth_id}"
    fi
    if [ "$stacking_function" == "stack-extend" ];then
-      debug "  Sending $stacking_function tx"
+      debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} -   Sending $stacking_function tx"
       run_blockstack_cli contract-call \
       "$signer_privkey" \
       1000 \
@@ -897,7 +990,7 @@ function begin_stx_transfers() {
 
       set -e
       response="$(send_tx "$tx" "$stacks_host" "$stacks_port")"
-      echo "response: $response"
+      echo -n "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - response: $response"
       if [ -z "$(echo "$response" | jq -r '.error' 2>/dev/null)" ]; then
          nonce=$((nonce + 1))
       fi
@@ -950,25 +1043,32 @@ function main() {
    cmd="$1"
    set -ue
 
-   debug "Command is '$cmd'"
+   debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Command is '$cmd'"
    case "$cmd" in 
       bitcoind)
          local subcmd="$2"
-         debug "Subcmmand is '$subcmd'"
+         debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Subcmmand is '$subcmd'"
 
          case "$subcmd" in
+            config|configure|make-config)
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Making config for bitcoind ... "
+               local bitcoin_config_path
+               bitcoin_config_path="$(make_bitcoin_config "$CONFIG" "$(get_bitcoin_template_path)")"
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - make_bitcoin_config $CONFIG $(get_bitcoin_template_path)"
+               echo "$bitcoin_config_path"
+               ;;         
             start)
-               echo -n "Starting bitcoind... "
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Starting bitcoind... "
                start_bitcoind "$CONFIG" "false"
 
-               echo -n "Instantiating 'main' wallet... "
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Instantiating 'main' wallet... "
                run_bitcoin_cli "$CONFIG" createwallet "main" true >/dev/null 2>&1
 
                echo "OK"
                ;;
 
             resume)
-               echo -n "Resuming bitcoind..."
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Resuming bitcoind..."
                start_bitcoind "$CONFIG" "true"
                
                run_bitcoin_cli "$CONFIG" loadwallet "main" >/dev/null 2>&1 
@@ -976,7 +1076,7 @@ function main() {
                ;;
 
             stop)
-               echo -n "Stopping bitcoind... "
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Stopping bitcoind... "
                stop_bitcoind "$CONFIG"
                ;;
 
@@ -986,7 +1086,7 @@ function main() {
                local addr="$4"
 
                if [ -z "$num_blocks" ] || [ -z "$addr" ]; then
-                  echo >&2 "Number of blocks and/or address not given"
+                  echo >&2 "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Number of blocks and/or address not given"
                   usage "bitcoind"
                fi
                set -ue
@@ -1004,12 +1104,12 @@ function main() {
                local peer_port="$4"
 
                if [ -z "$peer_addr" ] || [ -z "$peer_port" ]; then
-                  echo >&2 "Missing peer addr and/or port"
+                  echo >&2 "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Missing peer addr and/or port"
                   usage "bitcoind"
                fi
                set -ue
 
-               echo -n "Peering $peer_addr:$peer_port..."
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Peering $peer_addr:$peer_port..."
 
                run_bitcoin_cli "$CONFIG" addnode "$peer_addr:$peer_port" "add"
                echo "OK"
@@ -1029,10 +1129,10 @@ function main() {
       signer)
          set +ue
          local signer_id="$2"
-         debug "Signer ID is '$signer_id'"
+         debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Signer ID is '$signer_id'"
 
          local subcmd="$3"
-         debug "Subcommand is '$subcmd'"
+         debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Subcommand is '$subcmd'"
          set -ue
 
          if [ -z "$signer_id" ]; then
@@ -1047,20 +1147,20 @@ function main() {
 
          case "$subcmd" in
             config|configure|make-config)
-               echo -n "Making config for signer '$signer_id'... "
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Making config for signer '$signer_id'... "
                local signer_config_path
                signer_config_path="$(make_signer_config "$CONFIG" "$signer_id" "$(get_signer_template_path)")"
-
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - make_signer_config $CONFIG $signer_id $(get_signer_template_path)"
                echo "$signer_config_path"
                ;;
 
             start)
-               echo -n "Starting signer '$signer_id'... "
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Starting signer '$signer_id'... "
                start_signer "$CONFIG" "$signer_id"
                ;;
 
             stop)
-               echo -n "Stopping signer '$signer_id'... "
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Stopping signer '$signer_id'... "
                stop_signer "$CONFIG" "$signer_id"
                ;;
             
@@ -1073,16 +1173,16 @@ function main() {
             stack-tx)
                set +ue
                local reward_cycle="$4"
-               debug "Reward cycle is '$reward_cycle'"
+               debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Reward cycle is '$reward_cycle'"
 
                local max_amount="$5"
-               debug "Max amount is '$max_amount'"
+               debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Max amount is '$max_amount'"
 
                local nonce="$6"
-               debug "Nonce is $nonce"
+               debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Nonce is $nonce"
 
                local auth_id="$7"
-               debug "Auth ID is $auth_id"
+               debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Auth ID is $auth_id"
 
                if [ -z "$reward_cycle" ]; then
                   echo >&2 "Reward cycle missing"
@@ -1112,18 +1212,18 @@ function main() {
             stack-extend)
                set +ue
                local reward_cycle="$4"
-               debug "Reward cycle is '$reward_cycle'"
+               debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Reward cycle is '$reward_cycle'"
 
                local max_amount="$5"
-               debug "Max amount is '$max_amount'"
+               debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Max amount is '$max_amount'"
 
                local nonce="$6"
-               debug "Nonce is $nonce"
+               debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Nonce is $nonce"
 
                local auth_id="$7"
-               debug "Auth ID is $auth_id"
+               debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Auth ID is $auth_id"
 
-               debug "**************** Calling stack-extend ****************"
+               debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - **************** Calling stack-extend ****************"
                make_stacking_tx "$CONFIG" "$signer_id" "$reward_cycle" "$max_amount" "$nonce" "$auth_id" "stack-extend"
                ;;
             *)
@@ -1135,10 +1235,10 @@ function main() {
       node)
          set +ue
          local node_id="$2"
-         debug "Node ID is '$node_id'"
+         debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Node ID is '$node_id'"
 
          local subcmd="$3"
-         debug "Subcommand is '$subcmd'"
+         debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Subcommand is '$subcmd'"
          set -ue
 
          if [ -z "$node_id" ]; then
@@ -1159,10 +1259,10 @@ function main() {
                ;;
 
             config-miner)
-               echo -n "Making miner config for node '$node_id'... "
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Making miner config for node '$node_id'... "
                set +ue
                local signers="$4"
-               debug "Signers is '$signers'"
+               debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Signers is '$signers'"
 
                if [ -z "$signers" ]; then
                   signers="none"
@@ -1171,15 +1271,16 @@ function main() {
 
                local node_config_path
                node_config_path="$(make_node_config "$CONFIG" "$node_id" "$(get_node_template_path)" "$(get_node_event_observer_template_path)" "true" "false" "$signers")"
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - make_node_config $CONFIG $node_id $(get_node_template_path) $(get_node_event_observer_template_path) true false $signers"
 
                echo "$node_config_path"
                ;;
             
             config-miner-stacker)
-               echo -n "Making miner-stacker config for node '$node_id'... "
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Making miner-stacker config for node '$node_id'... "
                set +ue
                local signers="$4"
-               debug "Signers is '$signers'"
+               debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Signers is '$signers'"
 
                if [ -z "$signers" ]; then
                   signers="none"
@@ -1188,15 +1289,17 @@ function main() {
 
                local node_config_path
                node_config_path="$(make_node_config "$CONFIG" "$node_id" "$(get_node_template_path)" "$(get_node_event_observer_template_path)" "true" "true" "$signers")"
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - make_node_config $CONFIG $node_id $(get_node_template_path) $(get_node_event_observer_template_path) true true $signers"
+               # make_node_config ./config.sh 0 ../../conf.in/stacks-node.toml.in ../../conf.in/stacks-node-event-observer.toml.in true true 0,1,2/tmp/one-miner/nodes/node-0.toml
 
                echo "$node_config_path"
                ;;
             
             config-follower)
-               echo -n "Making follower config for node '$node_id'... "
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Making follower config for node '$node_id'... "
                set +ue
                local signers="$4"
-               debug "Signers is '$signers'"
+               debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Signers is '$signers'"
 
                if [ -z "$signers" ]; then
                   signers="none"
@@ -1210,10 +1313,10 @@ function main() {
                ;;
             
             config-follower-stacker)
-               echo -n "Making follower-stacker config for node '$node_id'... "
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Making follower-stacker config for node '$node_id'... "
                set +ue
                local signers="$4"
-               debug "Signers is '$signers'"
+               debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Signers is '$signers'"
 
                if [ -z "$signers" ]; then
                   signers="none"
@@ -1227,12 +1330,12 @@ function main() {
                ;;
 
             config-fault-injection)
-               echo -n "Setting fault-injection for node '$node_id'..."
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Setting fault-injection for node '$node_id'..."
                set +ue
                local fault_name="$4"
                local fault_value="$5"
-               debug "Fault name is '$fault_name'"
-               debug "Fault value is '$fault_value'"
+               debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Fault name is '$fault_name'"
+               debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Fault value is '$fault_value'"
 
                if [ -z "$fault_name" ]; then
                   usage "node"
@@ -1249,12 +1352,12 @@ function main() {
                ;;
 
             start)
-               echo -n "Starting node '$node_id'... "
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Starting node '$node_id'... "
                start_node "$CONFIG" "$node_id"
                ;;
 
             stop)
-               echo -n "Stopping node '$node_id'... "
+               echo -n "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Stopping node '$node_id'... "
                stop_node "$CONFIG" "$node_id"
                ;;
 
@@ -1295,7 +1398,7 @@ function main() {
 
       tx)
          local subcmd="$2"
-         debug "Subcmmand is '$subcmd'"
+         debug "$(date '+%Y-%m-%d %H:%M:%S') ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - Subcmmand is '$subcmd'"
          case "$subcmd" in
             transfer)
                local private_key

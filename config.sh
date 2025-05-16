@@ -2,9 +2,11 @@
 
 _CONF_BASEDIR="/tmp/naka3"
 
-_CONF_BITCOIN_P2P_PORT=18332
-_CONF_BITCOIN_RPC_PORT=18333
+_CONF_BITCOIN_P2P_PORT=18444 #18332
+_CONF_BITCOIN_RPC_PORT=18443 #18333
 _CONF_BITCOIN_DATA_DIR="$_CONF_BASEDIR/bitcoin"
+_CONF_BITCOIN_RPC_USER="naka3"
+_CONF_BITCOIN_RPC_PASS="naka3"
 
 _CONF_STACKS_HOST=127.0.0.1
 _CONF_STACKS_P2P_PORT=20444
@@ -59,6 +61,14 @@ function conf_get_bitcoind_p2p_port() {
 
 function conf_get_bitcoind_rpc_port() {
    echo "$_CONF_BITCOIN_RPC_PORT"
+}
+
+function conf_get_bitcoind_rpc_user() {
+   echo "$_CONF_BITCOIN_RPC_USER"
+}
+
+function conf_get_bitcoind_rpc_pass() {
+   echo "$_CONF_BITCOIN_RPC_PASS"
 }
 
 function conf_get_bitcoind_data_dir() {

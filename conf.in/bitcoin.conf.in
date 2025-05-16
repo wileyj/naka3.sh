@@ -1,0 +1,37 @@
+regtest=1 #chain=regtest
+
+[regtest]
+printtoconsole=1
+disablewallet=0
+txindex=1
+
+# Specify a non-default location to store blockchain data.
+datadir=@@BITCOIN_DATA_DIR@@
+
+# [network]
+discover=0
+dns=0
+dnsseed=0
+listenonion=0
+
+# [rpc]
+rpcserialversion=0
+# Accept command line and JSON-RPC commands.
+server=1
+# Accept public REST requests.
+rest=1
+rpcbind=0.0.0.0:@@BITCOIN_RPC_PORT@@
+rpcallowip=0.0.0.0/0
+rpcallowip=::/0
+rpcuser=@@BITCOIN_RPC_USER@@
+rpcpassword=@@BITCOIN_RPC_PASS@@
+bind=0.0.0.0:@@BITCOIN_P2P_PORT@@
+
+# [debug]
+# Disable debug logging for all categories.
+debug=1
+
+# [wallet]
+addresstype=legacy
+changetype=legacy
+fallbackfee=0.00001

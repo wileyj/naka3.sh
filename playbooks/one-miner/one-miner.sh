@@ -28,12 +28,13 @@ rm -rf "/tmp/one-miner"
 "$naka3" -c "./config-signer-2.sh" signer 2 config
 
 "$naka3" node 0 config-miner-stacker "0,1,2"
+"$naka3" bitcoind config
 
 btcaddr="$("$naka3" node 0 miner-addr | jq -r '.BTC')"
 
-echo "Miner address is $btcaddr"
+echo "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}${FUNCNAME:-main}${LINENO} -  Miner address is $btcaddr"
 
-"$naka3" bitcoind start
+"$naka3" bitcoind start 
 "$naka3" bitcoind mine 101 "$btcaddr"
 
 "$naka3" -c "./config-signer-0.sh" signer 0 start
@@ -45,11 +46,11 @@ echo "Miner address is $btcaddr"
 # advance to epoch 2.5 (starts at 108)
 for i in $(seq 0 10); do
    sleep 2
-   echo -e "Mining 1 btc to $btcaddr || sleep 2"
+   echo -e "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} -  Mining 1 btc to $btcaddr || sleep 2"
    "$naka3" bitcoind mine 1 "$btcaddr"
 done
 
-echo "stack stackity stack-stack-stack"
+echo "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} -  stack stackity stack-stack-stack"
 for i in $(seq 0 2); do
    tx="$("$naka3" -c "./config-signer-$i.sh" signer "$i" stack-tx 5 9000000000000000 0 1)"
    "$naka3" node 0 send-tx "$tx"
@@ -63,13 +64,13 @@ function check_pox_cycle(){
    local stacks_port="$(conf_get_stacks_rpc_port)"
    local remaining_blocks=$(curl -sL http://${stacks_host}:${stacks_port}/v2/pox | jq -r .next_cycle.blocks_until_prepare_phase)
    local cur_cycle=$(curl -sL http://${stacks_host}:${stacks_port}/v2/pox | jq -r .current_cycle.id)
-   echo -e "remaining_blocks: $remaining_blocks"
+   echo -e "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - remaining_blocks: $remaining_blocks"
    echo -e ""
    if  [ "$remaining_blocks" -ge "10" ] &&  $STACKING_EXTENDED;then
       STACKING_EXTENDED=false
    fi
    if  [ "$remaining_blocks" -le "10" ] &&  ! $STACKING_EXTENDED; then
-      echo -e "stack stackity stack-stack-extend"
+      echo -e "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} - stack stackity stack-stack-extend"
       for i in $(seq 0 2); do
          source ./config-signer-$i.sh
          local address="$(blockstack-cli --testnet addresses "$_CONF_STACKS_SIGNER_KEY" | jq -r '.STX')"
@@ -86,7 +87,7 @@ function check_pox_cycle(){
 for i in $(seq 0 20); do
    BLOCKS_REMAINING=$(( 20 - i ))
    "$naka3" bitcoind mine 1 "$btcaddr"
-   echo -e "Burnchain Blocks Remaining until epoch 3.0: $BLOCKS_REMAINING"
+   echo -e "$(date '+%Y-%m-%d %H:%M:%S') - ${BASH_SOURCE}:${FUNCNAME:-main}:${LINENO} -  Burnchain Blocks Remaining until epoch 3.0: $BLOCKS_REMAINING"
    sleep 15s
 done
 
